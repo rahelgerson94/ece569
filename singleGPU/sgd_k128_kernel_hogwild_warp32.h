@@ -67,7 +67,6 @@ In MF, one SGD update consists of four steps:
             the warp (and named in mask),  moving 4 or 8 bytes of data per thread depending on the type.
             Threads within a warp are referred to as lanes, and may have an index between 0 and warpSize-1 (inclusive). 
             Four source-lane addressing modes are supported: 
-            make a dummy change
             */
             start_id = __shfl(start_id, 0); //Dr.Akoglu: 
             
