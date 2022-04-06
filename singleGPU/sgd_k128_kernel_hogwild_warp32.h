@@ -1,5 +1,3 @@
-
-
 __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             const mf_node *R,
                             long long nnz,
@@ -9,7 +7,7 @@ __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             float *dynamic_rate,
                             long long u_seg,
                             long long v_seg,
-                            int k,
+                            int k, //feature dimension vector 
                             int num_iters,
                             int current_iter,
                             int update_count_per_block, 
@@ -25,33 +23,57 @@ __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             )
 {
 
-
+/*
+In MF, one SGD update consists of four steps: 
+1) read one sample (r[u,v] ) from the rating matrix, 
+2) read two feature vectors (pu , qv ), 
+3) compute prediction error(r[u,v] − pu * qv ), and 
+4) update the features. Except for the first step, other three steps are all vector operations at length k.
+*/
     //persistant thread
-    for(int ite = current_iter; ite < current_iter + num_iters; ite ++)
-    {
-        float tmp_lrate = __ldg(&dynamic_rate[ite]);
-        
-        for(int update_ite = 0; update_ite < update_count_this_block; update_ite ++)
-        {
+    for(int ite = current_iter; ite < current_iter + num_iters; ite ++){
+        /*
+        __ldg : Read-Only Data Cache Load Function
+        T __ldg(const T* address);
+        returns the data of type T located at address address,
+        */
+        float tmp_lrate = __ldg(&dynamic_rate[ite]); 
+        for(int update_ite = 0; update_ite < update_count_this_block; update_ite ++){
 
             int lane_id = threadIdx.x%32;
             int local_wid = threadIdx.x/32;
             int wid = 4*blockIdx.x + local_wid;  
 
             long long start_id = 0;
-            if(lane_id == 0)
-            {
-                long long origin = (long long)(curand_uniform(&state[wid])*nnz);
+            if(lane_id == 0){ // Dr.Akoglu  
+                long long origin = (long long)(curand_uniform(&state[wid])*nnz);  
                 start_id = origin%nnz;
                 //start_id == 0;
             }
-            start_id = __shfl(start_id, 0);
+            /*
+            __shfl is a  warp shuffling instruction
+            note: __shfl is depreciated; use __shfl_sync instead
+            shuffling is  used to compute the dot product pu × qv and broadcast the result. 
+            usage: T __shfl_sync(unsigned mask, T var, int srcLane, int width=warpSize);
+                * __shfl_sync() returns the value of var held by the thread whose ID is given by srcLane. 
+                * If width is less than warpSize then each subsection of the warp behaves as a separate entity 
+                  with a starting logical lane ID of 0. 
+                * If srcLane is outside the range [0:width-1], the value returned corresponds 
+                  to the value of var held by the srcLane modulo width (i.e. within the same subsection).
+
+
+            The __shfl_sync() intrinsics permit exchanging of a variable between threads within a warp 
+            without use of shared memory. The exchange occurs simultaneously for all active threads within 
+            the warp (and named in mask),  moving 4 or 8 bytes of data per thread depending on the type.
+            Threads within a warp are referred to as lanes, and may have an index between 0 and warpSize-1 (inclusive). 
+            Four source-lane addressing modes are supported: 
+            */
+            start_id = __shfl(start_id, 0); //Dr.Akoglu: 
             
             for(int i = 0;i < update_vector_size;i++)
             {
                 int offset = (start_id + i)%nnz;
-                
-                float r = __ldg(&R[offset].rate);
+                float r = __ldg( &R[offset].rate);
                 int u = __ldg(&R[offset].u);
                 int v = __ldg(&R[offset].v);
 
@@ -82,7 +104,7 @@ __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
 
                 tmp_product = __shfl(tmp_product,0);
 
-                float ruv = r - tmp_product;
+                float ruv = r - tmp_product; //get error
 
                 //update
                 //only works for k=blockDim.x=128
