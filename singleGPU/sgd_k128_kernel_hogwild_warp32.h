@@ -5,21 +5,21 @@ __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             half *q,
                             curandState *state,
                             float *dynamic_rate,
-                            long long u_seg,
-                            long long v_seg,
+                            long long u_seg, //unused
+                            long long v_seg,//unused
                             int k, //feature dimension vector 
                             int num_iters,
                             int current_iter,
-                            int update_count_per_block, 
+                            int update_count_per_block, //unused
                             int update_count_this_block,
                             int update_vector_size,
                             float lambda_p,
                             float lambda_q,
                             double *gpu_iter_err,
-                            int u_grid,
-                            int v_grid,
-                            int u_id,
-                            int v_id
+                            int u_grid, //unused
+                            int v_grid, //unused
+                            int u_id, //unused
+                            int v_id //unused
                             )
 {
 
@@ -67,13 +67,14 @@ In MF, one SGD update consists of four steps:
             the warp (and named in mask),  moving 4 or 8 bytes of data per thread depending on the type.
             Threads within a warp are referred to as lanes, and may have an index between 0 and warpSize-1 (inclusive). 
             Four source-lane addressing modes are supported: 
+            make a dummy change
             */
             start_id = __shfl(start_id, 0); //Dr.Akoglu: 
             
             for(int i = 0;i < update_vector_size;i++)
             {
                 int offset = (start_id + i)%nnz;
-                float r = __ldg( &R[offset].rate);
+                float r = __ldg( &R[offset].rate); //get the address of the rate field, read it from the cache
                 int u = __ldg(&R[offset].u);
                 int v = __ldg(&R[offset].v);
 
