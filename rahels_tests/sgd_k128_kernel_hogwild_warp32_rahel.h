@@ -31,9 +31,6 @@ In MF, one SGD update consists of four steps:
 4) update the features. Except for the first step, other three steps are all vector operations at length k.
 */
     //persistant thread
-    /*
-    https://stackoverflow.com/questions/14821029/persistent-threads-in-opencl-and-cuda
-    */
     for(int ite = current_iter; ite < current_iter + num_iters; ite ++){
         /*
         __ldg : Read-Only Data Cache Load Function
@@ -43,13 +40,14 @@ In MF, one SGD update consists of four steps:
         float tmp_lrate = __ldg(&dynamic_rate[ite]); 
         for(int update_ite = 0; update_ite < update_count_this_block; update_ite ++){
 
-            int lane_id = threadIdx.x%32;
-            int local_wid = threadIdx.x/32;
+            int lane_id = threadIdx.x%32; //p_q_k_ind
+            int local_wid = threadIdx.x/32; //
             int wid = 4*blockIdx.x + local_wid;  
 
             long long start_id = 0;
+            /*only threads whose idx % 32 == 0 will access P and Q randomly  */
             if(lane_id == 0){ // Dr.Akoglu  
-                long long origin = (long long)(curand_uniform(&state[wid])*nnz);  
+                long long origin = (long long)(curand_uniform(&state[wid])*nnz);  //randum number gen. from uniform dist
                 start_id = origin%nnz;
                 //start_id == 0;
             }
@@ -73,20 +71,21 @@ In MF, one SGD update consists of four steps:
             */
             start_id = __shfl(start_id, 0); //Dr.Akoglu: 
             
-            for(int i = 0;i < update_vector_size;i++)
-            {
+            for(int i = 0;i < update_vector_size;i++){
                 int offset = (start_id + i)%nnz;
                 float r = __ldg( &R[offset].rate); //get the address of the rate field, read it from the cache
                 int u = __ldg(&R[offset].u);
                 int v = __ldg(&R[offset].v);
 
                 //read the p & q into register file.
-                int base_p = u*k;
-                int base_q = v*k;
+                //base_p and base_q are random, so access will not be coalseced
+                //random b/c u,v are  fcts of offset, and offset is random if threadIdx.x % 32 = 0. 
+                int base_p = u*k; 
+                int base_q = v*k; 
 
                 float tmp_p1 = __half2float(p[base_p + lane_id]);
                 float tmp_q1 = __half2float(q[base_q + lane_id]);
-            
+    
                 float tmp_p2 = __half2float(p[base_p + lane_id + 32]);
                 float tmp_q2 = __half2float(q[base_q + lane_id + 32]);
             

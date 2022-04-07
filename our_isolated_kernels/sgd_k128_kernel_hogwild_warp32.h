@@ -1,3 +1,12 @@
+/*
+replacements
+*/
+
+struct mf_node{
+    int u,v;
+    float rate; //i think this is the value of R at [u][v], ie rate = R[u][v]
+};
+
 __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             const mf_node *R,
                             long long nnz,
@@ -31,6 +40,9 @@ In MF, one SGD update consists of four steps:
 4) update the features. Except for the first step, other three steps are all vector operations at length k.
 */
     //persistant thread
+    /*
+    https://stackoverflow.com/questions/14821029/persistent-threads-in-opencl-and-cuda
+    */
     for(int ite = current_iter; ite < current_iter + num_iters; ite ++){
         /*
         __ldg : Read-Only Data Cache Load Function
@@ -45,9 +57,10 @@ In MF, one SGD update consists of four steps:
             int wid = 4*blockIdx.x + local_wid;  
 
             long long start_id = 0;
+             /*only threads whose idx % 32 == 0 will access P and Q randomly  */
             if(lane_id == 0){ // Dr.Akoglu  
-                long long origin = (long long)(curand_uniform(&state[wid])*nnz);  
-                start_id = origin%nnz;
+                long long origin = (long long)(curand_uniform(&state[wid])*nnz);  //Dr.Akoglu
+                start_id = origin % nnz;
                 //start_id == 0;
             }
             /*
@@ -74,7 +87,7 @@ In MF, one SGD update consists of four steps:
             {
                 int offset = (start_id + i)%nnz;
                 float r = __ldg( &R[offset].rate); //get the address of the rate field, read it from the cache
-                int u = __ldg(&R[offset].u);
+                int u = __ldg(&R[offset].u); 
                 int v = __ldg(&R[offset].v);
 
                 //read the p & q into register file.

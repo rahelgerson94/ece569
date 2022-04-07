@@ -515,7 +515,6 @@ __global__ void random_init(
 
 void init_feature(short *feature_vec, int grid, long long seg, int k)
 {
-
     float scale = (float)sqrt(1.0/k);
 
     half*gpu_vec;

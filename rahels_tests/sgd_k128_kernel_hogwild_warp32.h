@@ -31,9 +31,6 @@ In MF, one SGD update consists of four steps:
 4) update the features. Except for the first step, other three steps are all vector operations at length k.
 */
     //persistant thread
-    /*
-    https://stackoverflow.com/questions/14821029/persistent-threads-in-opencl-and-cuda
-    */
     for(int ite = current_iter; ite < current_iter + num_iters; ite ++){
         /*
         __ldg : Read-Only Data Cache Load Function
@@ -42,7 +39,6 @@ In MF, one SGD update consists of four steps:
         */
         float tmp_lrate = __ldg(&dynamic_rate[ite]); 
         for(int update_ite = 0; update_ite < update_count_this_block; update_ite ++){
-
             int lane_id = threadIdx.x%32;
             int local_wid = threadIdx.x/32;
             int wid = 4*blockIdx.x + local_wid;  
@@ -73,17 +69,16 @@ In MF, one SGD update consists of four steps:
             */
             start_id = __shfl(start_id, 0); //Dr.Akoglu: 
             
-            for(int i = 0;i < update_vector_size;i++)
-            {
+            for(int i = 0;i < update_vector_size;i++){
                 int offset = (start_id + i)%nnz;
                 float r = __ldg( &R[offset].rate); //get the address of the rate field, read it from the cache
                 int u = __ldg(&R[offset].u);
                 int v = __ldg(&R[offset].v);
 
                 //read the p & q into register file.
+                /*Rahel*/
                 int base_p = u*k;
                 int base_q = v*k;
-
                 float tmp_p1 = __half2float(p[base_p + lane_id]);
                 float tmp_q1 = __half2float(q[base_q + lane_id]);
             
@@ -95,9 +90,7 @@ In MF, one SGD update consists of four steps:
             
                 float tmp_p4 = __half2float(p[base_p + lane_id + 96]);
                 float tmp_q4 = __half2float(q[base_q + lane_id + 96]);
-
                 float tmp_product = tmp_p1*tmp_q1 + tmp_p2*tmp_q2 + tmp_p3*tmp_q3 + tmp_p4*tmp_q4;
-
                 //get dot product.
                 tmp_product += __shfl_down(tmp_product, 16);
                 tmp_product += __shfl_down(tmp_product, 8);
@@ -109,7 +102,7 @@ In MF, one SGD update consists of four steps:
 
                 float ruv = r - tmp_product; //get error
 
-                //update
+                //update p and q
                 //only works for k=blockDim.x=128
                 p[base_p + lane_id +  0] = __float2half(tmp_p1 + tmp_lrate*(ruv*tmp_q1 - lambda_p*tmp_p1));
                 q[base_q + lane_id +  0] = __float2half(tmp_q1 + tmp_lrate*(ruv*tmp_p1 - lambda_q*tmp_q1));

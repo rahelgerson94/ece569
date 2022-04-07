@@ -20,8 +20,7 @@ __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             int v_grid, //unused
                             int u_id, //unused
                             int v_id //unused
-                            )
-{
+                            ){
 
 /*
 In MF, one SGD update consists of four steps: 
@@ -31,9 +30,6 @@ In MF, one SGD update consists of four steps:
 4) update the features. Except for the first step, other three steps are all vector operations at length k.
 */
     //persistant thread
-    /*
-    https://stackoverflow.com/questions/14821029/persistent-threads-in-opencl-and-cuda
-    */
     for(int ite = current_iter; ite < current_iter + num_iters; ite ++){
         /*
         __ldg : Read-Only Data Cache Load Function
