@@ -1,3 +1,6 @@
+
+
+
 __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             const mf_node *R,
                             long long nnz,
@@ -20,7 +23,8 @@ __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             int v_grid, //unused
                             int u_id, //unused
                             int v_id //unused
-                            ){
+                            )
+{
 
 /*
 In MF, one SGD update consists of four steps: 
@@ -39,16 +43,21 @@ In MF, one SGD update consists of four steps:
         float tmp_lrate = __ldg(&dynamic_rate[ite]); 
         for(int update_ite = 0; update_ite < update_count_this_block; update_ite ++){
 
-            int lane_id = threadIdx.x%32;
-            int local_wid = threadIdx.x/32;
+            int lane_id = threadIdx.x%32; //p_q_k_ind
+            int local_wid = threadIdx.x/32; //
             int wid = 4*blockIdx.x + local_wid;  
 
             long long start_id = 0;
-            if(lane_id == 0){ // Dr.Akoglu  
-                long long origin = (long long)(curand_uniform(&state[wid])*nnz);  
-                start_id = origin%nnz;
+            
+            /*only threads whose idx % 32 == 0 will access P and Q randomly  */
+            /*
+            if(lane_id == 0){ // 
+                long long origin = (long long)(curand_uniform(&state[wid])*nnz);  //randum number gen. from uniform dist
+                start_id = origin% nnz;
                 //start_id == 0;
             }
+            */
+
             /*
             __shfl is a  warp shuffling instruction
             note: __shfl is depreciated; use __shfl_sync instead
@@ -69,20 +78,54 @@ In MF, one SGD update consists of four steps:
             */
             start_id = __shfl(start_id, 0); //Dr.Akoglu: 
             
-            for(int i = 0;i < update_vector_size;i++)
-            {
+            for(int i = 0;i < update_vector_size;i++){ 
                 int offset = (start_id + i)%nnz;
                 float r = __ldg( &R[offset].rate); //get the address of the rate field, read it from the cache
                 int u = __ldg(&R[offset].u);
                 int v = __ldg(&R[offset].v);
 
                 //read the p & q into register file.
-                int base_p = u*k;
-                int base_q = v*k;
+                //base_p and base_q are random, so access will not be coalseced
+                //random b/c u,v are  fcts of offset, and offset is random if threadIdx.x % 32 = 0. 
+
+                /*begin rahel's optimization*/
+                int base_p  = u * k;
+                int base_q = v* k;
+                float tmp_u, tmp_v, tmp_prod;
 
                 float tmp_p1 = __half2float(p[base_p + lane_id]);
                 float tmp_q1 = __half2float(q[base_q + lane_id]);
+    
+                float tmp_p2 = __half2float(p[base_p + lane_id + 32]);
+                float tmp_q2 = __half2float(q[base_q + lane_id + 32]);
             
+                float tmp_p3 = __half2float(p[base_p + lane_id + 64]);
+                float tmp_q3 = __half2float(q[base_q + lane_id + 64]);
+            
+                float tmp_p4 = __half2float(p[base_p + lane_id + 96]);
+                float tmp_q4 = __half2float(q[base_q + lane_id + 96]);
+
+                //get dot product.
+                float tmp_product = tmp_p1*tmp_q1 + tmp_p2*tmp_q2 + tmp_p3*tmp_q3 + tmp_p4*tmp_q4;
+                tmp_product += __shfl_down(tmp_product, 16);
+                tmp_product += __shfl_down(tmp_product, 8);
+                tmp_product += __shfl_down(tmp_product, 4);
+                tmp_product += __shfl_down(tmp_product, 2);
+                tmp_product += __shfl_down(tmp_product, 1);
+                tmp_product = __shfl(tmp_product,0);
+
+                float ruv = r - tmp_product; //get error
+
+                //update p and q
+                update_vector_size
+                /* end Rahel's opt*/
+                
+                int base_p = u*k; 
+                int base_q = v*k; 
+
+                float tmp_p1 = __half2float(p[base_p + lane_id]);
+                float tmp_q1 = __half2float(q[base_q + lane_id]);
+    
                 float tmp_p2 = __half2float(p[base_p + lane_id + 32]);
                 float tmp_q2 = __half2float(q[base_q + lane_id + 32]);
             
@@ -100,7 +143,6 @@ In MF, one SGD update consists of four steps:
                 tmp_product += __shfl_down(tmp_product, 4);
                 tmp_product += __shfl_down(tmp_product, 2);
                 tmp_product += __shfl_down(tmp_product, 1);
-
                 tmp_product = __shfl(tmp_product,0);
 
                 float ruv = r - tmp_product; //get error
@@ -118,9 +160,9 @@ In MF, one SGD update consists of four steps:
 
                 p[base_p + lane_id + 96] = __float2half(tmp_p4 + tmp_lrate*(ruv*tmp_q4 - lambda_p*tmp_p4));
                 q[base_q + lane_id + 96] = __float2half(tmp_q4 + tmp_lrate*(ruv*tmp_p4 - lambda_q*tmp_q4));
-            }    
-        }
-    }
+            }  //end inside for: read p and q,
+        }//end middle  for
+    } //end outside for
     
 }
 
