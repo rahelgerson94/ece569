@@ -22,6 +22,8 @@ Description: Contains tiled multiplication kernel and associated launch code.
 #define K 128
 #define no_r_b 1024
 #define FULL_MASK 0xffffffff
+#define DEBUG_THREAD 511
+#define DEBUG_BLOCK 5
 __constant__ int RAND[no_r_b];
 
 struct mf_node
@@ -132,6 +134,9 @@ In MF, one SGD update consists of four steps:
                 float tmp_p4 = __half2float(p[base_p + lane_id + 96]);
                 float tmp_q4 = __half2float(q[base_q + lane_id + 96]);
 
+                if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\n temp p is %.2f,%.2f,%.2f,%.2f and temp q is %.2f,%.2f,%.2f,%.2f \n\n", 
+                tmp_p1,tmp_p2, tmp_p3, tmp_p4, tmp_q1, tmp_q2, tmp_q3, tmp_q4);}
+
                 float tmp_product = tmp_p1*tmp_q1 + tmp_p2*tmp_q2 + tmp_p3*tmp_q3 + tmp_p4*tmp_q4;
 
                 //get dot product.
@@ -144,6 +149,8 @@ In MF, one SGD update consists of four steps:
                 tmp_product = __shfl_sync(FULL_MASK,tmp_product,0);
 
                 float ruv = r - tmp_product; //get error
+
+                 if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\nerror = %f\n\n", ruv);}
 
                 //update
                 //only works for k=blockDim.x=128
@@ -158,9 +165,16 @@ In MF, one SGD update consists of four steps:
 
                 p[base_p + lane_id + 96] = __float2half(tmp_p4 + tmp_lrate*(ruv*tmp_q4 - lambda*tmp_p4));
                 q[base_q + lane_id + 96] = __float2half(tmp_q4 + tmp_lrate*(ruv*tmp_p4 - lambda*tmp_q4));
+
+                if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\nwroteback to p %f,%f,%f,%f and wroteback to q %f,%f,%f,%f \n\n", 
+                p[base_p + lane_id +  0], p[base_p + lane_id +  32], p[base_p + lane_id +  64], p[base_p + lane_id +  96],
+                q[base_p + lane_id +  0], q[base_p + lane_id +  32], q[base_p + lane_id +  64], q[base_p + lane_id +  96]);}
             }    
         }
     }
+
+    __syncthreads();
+    if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\nThe value in index 0 is %f\n", p[0]);}
     
 }
 
@@ -183,8 +197,8 @@ mf_node* readInputAsMF(float* input, int numRows, int numCols){
 // for ease of testing, A = R, B = P, C = Q
 int main(int argc, char **argv) {
   wbArg_t args;
-  float *hostP; // The A matrix
-  float *hostQ; // The B matrix
+  half *hostP; // The A matrix
+  half *hostQ; // The B matrix
   mf_node *hostR; // The output C matrix
   float *temp;
   half *deviceP; // A matrix on device
@@ -198,6 +212,7 @@ int main(int argc, char **argv) {
   int numRColumns; // number of columns in the matrix C (you have to set
                    // this)
   int hostRand[no_r_b];
+  int numElems;
 
   args = wbArg_read(argc, argv);
 
@@ -205,6 +220,8 @@ int main(int argc, char **argv) {
   temp = (float *)wbImport(wbArg_getInputFile(args, 0), &numRRows,
                             &numRColumns);
   hostR = readInputAsMF(temp,numRRows,numRColumns);
+
+  numElems = numRRows * numRColumns;
 
   for (int i = 0; i < no_r_b; i++) // initialize const array of random indices
     hostRand[i] = rand() % no_r_b;
@@ -219,8 +236,15 @@ int main(int argc, char **argv) {
   numQColumns = numRColumns;
   //@@ Allocate the hostC matrix
   
-  hostP = (float *)malloc((numPRows*numPColumns) * sizeof(half));
-  hostQ = (float *)malloc((numQRows*numQColumns) * sizeof(half));
+  hostP = (half *)malloc((numPRows*numPColumns) * sizeof(half));
+  hostQ = (half *)malloc((numQRows*numQColumns) * sizeof(half));
+
+  // have to set to nonzero initially or the algorithm won't do anything
+  for(int i = 0; i < numPRows * numPColumns; ++i)
+    hostP[i] = 0.01;
+  for(int i = 0; i < numQRows * numQColumns; ++i)
+    hostQ[i] = 0.01;
+
 
   wbTime_stop(Generic, "Importing data and creating memory on host");
   
@@ -235,6 +259,8 @@ int main(int argc, char **argv) {
   wbTime_start(GPU, "Copying input memory to the GPU.");
   //@@ Copy memory to the GPU here
   cudaMemcpy(deviceR,hostR,(numRRows*numRColumns)*sizeof(mf_node),cudaMemcpyHostToDevice);
+  cudaMemcpy(deviceP,hostP,(numPRows*numPColumns)*sizeof(half),cudaMemcpyHostToDevice);
+  cudaMemcpy(deviceQ,hostQ,(numQRows*numQColumns)*sizeof(half),cudaMemcpyHostToDevice);
   cudaMemcpyToSymbol(RAND,hostRand, no_r_b * sizeof(int));
 
   wbTime_stop(GPU, "Copying input memory to the GPU.");
@@ -278,6 +304,14 @@ int main(int argc, char **argv) {
   cudaMemcpy(hostQ,deviceQ,(numQRows*numQColumns)*sizeof(half),cudaMemcpyDeviceToHost);
 
   wbTime_stop(Copy, "Copying output memory to the CPU");
+
+  printf("\n\n");
+  for(int i = 0; i < numPRows; ++i){
+    for(int j = 0; j < numPColumns; ++j){
+      printf("%f ", hostP[i * numPColumns + j]);
+    }
+    printf("\n");
+  }
 
   wbTime_start(GPU, "Freeing GPU Memory");
   //@@ Free the GPU memory here
