@@ -1,22 +1,31 @@
+
 #include <cuda_fp16.h>
+
+
 __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
-                            mf_node *R,
-//                          long long nnz,
+                            const mf_node *R,
+                            long long nnz,
                             half *p,
                             half *q,
-//                          curandState *state,
-//                          float *dynamic_rate,
+                            curandState *state,
+                            float *dynamic_rate,
+                            long long u_seg, //unused
+                            long long v_seg,//unused
                             int k, //feature dimension vector 
                             int num_iters,
-//                          int current_iter,
+                            int current_iter,
+                            int update_count_per_block, //unused
                             int update_count_this_block,
                             int update_vector_size,
-                            float lambda,
-                            float beta,
-                            float initialLearningRate
+                            float lambda_p,
+                            float lambda_q,
+                            double *gpu_iter_err,
+                            int u_grid, //unused
+                            int v_grid, //unused
+                            int u_id, //unused
+                            int v_id //unused
                             )
 {
-
 
 /*
 In MF, one SGD update consists of four steps: 
@@ -36,8 +45,8 @@ In MF, one SGD update consists of four steps:
         for(int update_ite = 0; update_ite < update_count_this_block; update_ite ++){
 
             int lane_id = threadIdx.x%32; //p_q_k_ind
-            //int local_wid = threadIdx.x/32; //rat_ind_pro
-            //int wid = 4*blockIdx.x + local_wid;  
+            int local_wid = threadIdx.x/32; //
+            int wid = 4*blockIdx.x + local_wid;  
 
             long long start_id = 0;
             
@@ -83,7 +92,7 @@ In MF, one SGD update consists of four steps:
                 /*begin rahel's optimization*/
                 int base_p  = u * k;
                 int base_q = v* k;
-                //float tmp_u, tmp_v, tmp_prod;
+                float tmp_u, tmp_v, tmp_prod;
 
                 float tmp_p1 = __half2float(p[base_p + lane_id]);
                 float tmp_q1 = __half2float(q[base_q + lane_id]);
