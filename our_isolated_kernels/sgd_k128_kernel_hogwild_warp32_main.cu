@@ -64,10 +64,13 @@ In MF, one SGD update consists of four steps:
 
     for (int i = 0; i < update_count_this_block; ++i){
         int rand_idx = RAND[blockDim.x * i + threadIdx.x];
+        if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\n Got random index %d \n\n", rand_idx);}
         sh_rating[rand_idx].u = __ldg(&R[1/2*i+threadIdx.x].u);
         sh_rating[rand_idx].v = __ldg(&R[1/2*i+threadIdx.x].v);
         sh_rating[rand_idx].r = __ldg(&R[1/2*i+threadIdx.x].r);
     }
+
+    __syncthreads();
 /////////////////////////
 
     // OPTIMIZATION: PULLED THIS OUT OF THE MAIN LOOP BECAUSE REDUNDANT
@@ -106,9 +109,14 @@ In MF, one SGD update consists of four steps:
             {
                 ///////////////////
                 // OPTIMIZATION TO ACCESS SHARED MEM INSTEAD OF GLOBAL
-                int u = sh_rating[local_wid + i * rat_per_block].u;
-                int v = sh_rating[local_wid + i * rat_per_block].v;
-                float r = sh_rating[local_wid + i * rat_per_block].r;
+                int temp = local_wid + i * rat_per_block;
+                int u = sh_rating[temp].u;
+                int v = sh_rating[temp].v;
+                float r = sh_rating[temp].r;
+                if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){
+                  printf("\nHandling rating at index %d in shared mem corresponding to rating in row %d, column %d, with value %f.\n\n", temp, u, v, r);
+                }
+                
                 ///////////////////
                 
                 /*
@@ -121,6 +129,8 @@ In MF, one SGD update consists of four steps:
                 //read the p & q into register file.
                 int base_p = u*k;
                 int base_q = v*k;
+
+                if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\n base_p is %d and base_q is %d \n\n", base_p,base_q);}
 
                 float tmp_p1 = __half2float(p[base_p + lane_id]);
                 float tmp_q1 = __half2float(q[base_q + lane_id]);
@@ -150,7 +160,7 @@ In MF, one SGD update consists of four steps:
 
                 float ruv = r - tmp_product; //get error
 
-                 if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\nerror = %f\n\n", ruv);}
+                if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\nerror = %f\n\n", ruv);}
 
                 //update
                 //only works for k=blockDim.x=128
@@ -166,9 +176,11 @@ In MF, one SGD update consists of four steps:
                 p[base_p + lane_id + 96] = __float2half(tmp_p4 + tmp_lrate*(ruv*tmp_q4 - lambda*tmp_p4));
                 q[base_q + lane_id + 96] = __float2half(tmp_q4 + tmp_lrate*(ruv*tmp_p4 - lambda*tmp_q4));
 
-                if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\nwroteback to p %f,%f,%f,%f and wroteback to q %f,%f,%f,%f \n\n", 
-                p[base_p + lane_id +  0], p[base_p + lane_id +  32], p[base_p + lane_id +  64], p[base_p + lane_id +  96],
-                q[base_p + lane_id +  0], q[base_p + lane_id +  32], q[base_p + lane_id +  64], q[base_p + lane_id +  96]);}
+                if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){
+                  printf("\nwroteback to p %f,%f,%f,%f at index %d and wroteback to q %f,%f,%f,%f at index %d \n\n", 
+                  p[base_p + lane_id +  0], p[base_p + lane_id +  32], p[base_p + lane_id +  64], p[base_p + lane_id +  96], base_p + lane_id + 96,
+                  q[base_p + lane_id +  0], q[base_p + lane_id +  32], q[base_p + lane_id +  64], q[base_p + lane_id +  96], base_q + lane_id + 96);
+                }
             }    
         }
     }
@@ -192,7 +204,24 @@ mf_node* readInputAsMF(float* input, int numRows, int numCols){
   return inputMF;
 }
 
-
+/* Arrange the N elements of ARRAY in random order.
+   Only effective if N is much smaller than RAND_MAX;
+   if this may not be the case, use a better random
+   number generator. */
+void shuffle(int *array, size_t n)
+{
+    if (n > 1) 
+    {
+        size_t i;
+        for (i = 0; i < n - 1; i++) 
+        {
+          size_t j = i + rand() / (RAND_MAX / (n - i) + 1);
+          int t = array[j];
+          array[j] = array[i];
+          array[i] = t;
+        }
+    }
+}
 
 // for ease of testing, A = R, B = P, C = Q
 int main(int argc, char **argv) {
@@ -219,12 +248,19 @@ int main(int argc, char **argv) {
   wbTime_start(Generic, "Importing data and creating memory on host");
   temp = (float *)wbImport(wbArg_getInputFile(args, 0), &numRRows,
                             &numRColumns);
+
+  printf("Matrix has %d rows and %d columns\n\n", numRRows,numRColumns);
+                
   hostR = readInputAsMF(temp,numRRows,numRColumns);
+
+  int indx = 1001;
+  printf("\nElement %d at row %d and column %d is %f\n\n", indx, hostR[indx].u,hostR[indx].v,hostR[indx].r);
 
   numElems = numRRows * numRColumns;
 
   for (int i = 0; i < no_r_b; i++) // initialize const array of random indices
-    hostRand[i] = rand() % no_r_b;
+    hostRand[i] = i;
+  shuffle(hostRand,no_r_b);
 
   // hostB = (float *)wbImport(wbArg_getInputFile(args, 1), &numBRows,
   //                          &numBColumns);
