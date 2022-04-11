@@ -201,7 +201,7 @@ mf_node* readInputAsMF(float* input, int numRows, int numCols){
 int main(int argc, char **argv) {
 
 //wbArg_t args;
-  wbArg_t args;
+
   half *hostP; // The A matrix
   half *hostQ; // The B matrix
 
