@@ -1,14 +1,15 @@
 /*
 File: tiled_solution.cu
-Author: Celyn Jacobs
+Author: Celyn Jacobs, Rahel Gerson
 Class: ECE569
 Description: Contains tiled multiplication kernel and associated launch code.
 */
 
 
-#include <wb.h>
+//#include <wb.h>
 #include <cuda_fp16.h>
-
+#include <time.h>
+/*
 #define wbCheck(stmt)                                                     \
   do {                                                                    \
     cudaError_t err = stmt;                                               \
@@ -18,6 +19,8 @@ Description: Contains tiled multiplication kernel and associated launch code.
       return -1;                                                          \
     }                                                                     \
   } while (0)
+*/
+
 
 #define K 128
 #define no_r_b 1024
@@ -225,9 +228,12 @@ void shuffle(int *array, size_t n)
 
 // for ease of testing, A = R, B = P, C = Q
 int main(int argc, char **argv) {
-  wbArg_t args;
+
+//wbArg_t args;
+
   half *hostP; // The A matrix
   half *hostQ; // The B matrix
+
   mf_node *hostR; // The output C matrix
   float *temp;
   half *deviceP; // A matrix on device
@@ -241,11 +247,13 @@ int main(int argc, char **argv) {
   int numRColumns; // number of columns in the matrix C (you have to set
                    // this)
   int hostRand[no_r_b];
+
+	clock_t t;
+  //args = wbArg_read(argc, argv);
   int numElems;
 
-  args = wbArg_read(argc, argv);
 
-  wbTime_start(Generic, "Importing data and creating memory on host");
+  //wbTime_start(Generic, "Importing data and creating memory on host");
   temp = (float *)wbImport(wbArg_getInputFile(args, 0), &numRRows,
                             &numRColumns);
 
@@ -282,24 +290,24 @@ int main(int argc, char **argv) {
     hostQ[i] = 0.01;
 
 
-  wbTime_stop(Generic, "Importing data and creating memory on host");
+  //wbTime_stop(Generic, "Importing data and creating memory on host");
   
-  wbTime_start(GPU, "Allocating GPU memory.");
+  //wbTime_start(GPU, "Allocating GPU memory.");
   //@@ Allocate GPU memory here
   cudaMalloc((void **) &deviceP, (numPRows*numPColumns)*sizeof(half));
   cudaMalloc((void **) &deviceQ, (numQRows*numQColumns)*sizeof(half));
   cudaMalloc((void **) &deviceR, (numRRows*numRColumns)*sizeof(mf_node));
 
-  wbTime_stop(GPU, "Allocating GPU memory.");
+  //wbTime_stop(GPU, "Allocating GPU memory.");
 
-  wbTime_start(GPU, "Copying input memory to the GPU.");
+  //wbTime_start(GPU, "Copying input memory to the GPU.");
   //@@ Copy memory to the GPU here
   cudaMemcpy(deviceR,hostR,(numRRows*numRColumns)*sizeof(mf_node),cudaMemcpyHostToDevice);
   cudaMemcpy(deviceP,hostP,(numPRows*numPColumns)*sizeof(half),cudaMemcpyHostToDevice);
   cudaMemcpy(deviceQ,hostQ,(numQRows*numQColumns)*sizeof(half),cudaMemcpyHostToDevice);
   cudaMemcpyToSymbol(RAND,hostRand, no_r_b * sizeof(int));
 
-  wbTime_stop(GPU, "Copying input memory to the GPU.");
+  //wbTime_stop(GPU, "Copying input memory to the GPU.");
 
   //@@ Initialize the grid and block dimensions here
   // note that TILE_WIDTH is set to 16 on line number 13.
@@ -309,7 +317,7 @@ int main(int argc, char **argv) {
   dim3 mygrid(((numRRows * numRColumns)-1)/no_r_b + 1);
   dim3 myblock(no_r_b/st);
   
-  wbTime_start(Compute, "Performing CUDA computation");
+  //wbTime_start(Compute, "Performing CUDA computation");
   //@@ Launch the GPU Kernel here
 
   float lambda = 0.05;
@@ -317,7 +325,8 @@ int main(int argc, char **argv) {
   float initialLearningRate = 0.08;
   float update_vector_size = 32;
   int num_iters = 10;
-
+	//begin timing
+	t = clock();
   sgd_k128_kernel_hogwild_warp32_lrate<<<mygrid,myblock>>>(
                             deviceR,
                             deviceP,
@@ -332,15 +341,18 @@ int main(int argc, char **argv) {
                             );
 
   cudaDeviceSynchronize();
-  wbTime_stop(Compute, "Performing CUDA computation");
+	double execution_time = ((double)t)/CLOCKS_PER_SEC
+  //wbTime_stop(Compute, "Performing CUDA computation");
 
-  wbTime_start(Copy, "Copying output memory to the CPU");
+  //wbTime_start(Copy, "Copying output memory to the CPU");
   //@@ Copy the GPU memory back to the CPU here
   cudaMemcpy(hostP,deviceP,(numPRows*numPColumns)*sizeof(half),cudaMemcpyDeviceToHost);
   cudaMemcpy(hostQ,deviceQ,(numQRows*numQColumns)*sizeof(half),cudaMemcpyDeviceToHost);
 
-  wbTime_stop(Copy, "Copying output memory to the CPU");
+  //wbTime_stop(Copy, "Copying output memory to the CPU");
 
+
+//wbTime_start(GPU, "Freeing GPU Memory");
   printf("\n\n");
   for(int i = 0; i < numPRows; ++i){
     for(int j = 0; j < numPColumns; ++j){
@@ -350,19 +362,19 @@ int main(int argc, char **argv) {
   }
 
   wbTime_start(GPU, "Freeing GPU Memory");
+
   //@@ Free the GPU memory here
   cudaFree(deviceP);
   cudaFree(deviceQ);
   cudaFree(deviceR);
 
-  wbTime_stop(GPU, "Freeing GPU Memory");
+  //wbTime_stop(GPU, "Freeing GPU Memory");
 
-  wbSolution(args, hostP, numPRows, numPColumns);
+  //wbSolution(args, hostP, numPRows, numPColumns);
 
   free(hostP);
   free(hostQ);
   free(hostR);
   free(temp);
-
   return 0;
 }
