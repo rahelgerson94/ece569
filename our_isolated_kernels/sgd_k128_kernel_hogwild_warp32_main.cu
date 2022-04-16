@@ -23,7 +23,7 @@ Description: Contains tiled multiplication kernel and associated launch code.
 
 
 #define K 128
-#define no_r_b 1024
+#define no_r_b 1024 //length of shared mem array
 #define FULL_MASK 0xffffffff
 #define DEBUG_THREAD 511
 #define DEBUG_BLOCK 5
@@ -37,7 +37,7 @@ struct mf_node
 
 __global__ void sgd_k128_kernel_hogwild_warp32_lrate(
                             mf_node *R,
-//                          long long nnz,
+//                          long long nnz, //l in egypt
                             half *p,
                             half *q,
 //                          curandState *state,
@@ -63,14 +63,19 @@ In MF, one SGD update consists of four steps:
 
 //////////////////////////
 // OPTIMIZATION TO ACCESS GLOBAL MEMORY IN COALESCED FASHION BUT LOAD INTO SHARED MEM RANDOMLY
-    __shared__ mf_node sh_rating[no_r_b];
+    __shared__ mf_node sh_rating[no_r_b]; //no_r_b : length of shared mem array
+    int index = blockIdx.x*blockDim.x + threadIdx.x;
 
     for (int i = 0; i < update_count_this_block; ++i){
         int rand_idx = RAND[blockDim.x * i + threadIdx.x];
         if(threadIdx.x == DEBUG_THREAD && blockIdx.x == DEBUG_BLOCK){printf("\n Got random index %d \n\n", rand_idx);}
-        sh_rating[rand_idx].u = __ldg(&R[1/2*i+threadIdx.x].u);
-        sh_rating[rand_idx].v = __ldg(&R[1/2*i+threadIdx.x].v);
-        sh_rating[rand_idx].r = __ldg(&R[1/2*i+threadIdx.x].r);
+        sh_rating[rand_idx].u = __ldg(&R[index+i*blockDim.x].u);
+        sh_rating[rand_idx].v = __ldg(&R[index+i*blockDim.x].v);
+        sh_rating[rand_idx].r = __ldg(&R[index+i*blockDim.x].r);
+
+        //sh_rating[rand_idx].u = __ldg(&R[1/2*i+threadIdx.x].u);
+        //sh_rating[rand_idx].v = __ldg(&R[1/2*i+threadIdx.x].v);
+        //sh_rating[rand_idx].r = __ldg(&R[1/2*i+threadIdx.x].r);
     }
 
     __syncthreads();
@@ -83,7 +88,7 @@ In MF, one SGD update consists of four steps:
 
     //////////////////
     // OPTIMIZATION to accomodate shared mem indexing
-    int rat_per_block = blockDim.x / 32;
+    int rat_per_block = blockDim.x / 32; //16
     /////////////////
 
     //persistant thread
@@ -96,7 +101,9 @@ In MF, one SGD update consists of four steps:
         // float tmp_lrate = __ldg(&dynamic_rate[ite]);
         float tmp_lrate = initialLearningRate/(1+beta * powf(ite,1.5)); // decreases learning rate every iteration
 
-        // update_count_this_block is st in egypt paper
+        // update_count_this_block is st in egypt paper;  st  = no_r_b / tpb (egypt) 
+        // no_r_b is length of shared mem array sh_rating (egypt paper)
+        //process sh_rating in st (= update_count_this_block) steps 
         for(int update_ite = 0; update_ite < update_count_this_block; update_ite++){
             /* OPTIMIZATION WITH SHARED MEM MEANS WE DONT NEED TO CALCULATE RAND INDEX EVERY TIME
             long long start_id = 0;
@@ -313,9 +320,9 @@ int main(int argc, char **argv) {
   // note that TILE_WIDTH is set to 16 on line number 13.
   // Here, we perform a de facto ceil() operation on integers using integer arithmetic
   int st = 2;
-
+  //1024, 512
   dim3 mygrid(((numRRows * numRColumns)-1)/no_r_b + 1);
-  dim3 myblock(no_r_b/st);
+  dim3 myblock(no_r_b/st); //1024/ 2 = 512
   
   //wbTime_start(Compute, "Performing CUDA computation");
   //@@ Launch the GPU Kernel here
