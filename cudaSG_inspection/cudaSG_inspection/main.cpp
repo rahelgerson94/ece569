@@ -12,9 +12,9 @@
 using std:: cout;
 using std::endl;
 struct bla{
-    int a[6];
-    int b[6];
-    float c[6];
+    int* a;
+    int* b;
+    float* c;
 };
 int main(int argc, char**argv){
 //    uint8_t  *hostP; // The A matrix
@@ -45,7 +45,14 @@ int main(int argc, char**argv){
 //    hostR = readInputAsMF(tmp,numRRows,numRColumns); //populate
 //    printMF_node(hostR, numRRows, numRColumns);
 //
+    int n = 6;
+    
+    
     bla bla;
+    bla.a = (int*)malloc(n*sizeof(int));
+    bla.b = (int*)malloc(n*sizeof(int));
+    bla.c = (float*)malloc(n*sizeof(float));
+    
     for (int i = 0; i < 6 ;i++){
         bla.a[i] = i;
     }
@@ -59,6 +66,9 @@ int main(int argc, char**argv){
     cout<< bla.a[index] <<endl;
     cout<< bla.b[index] <<endl;
      
+    free(bla.a);
+    free(bla.b);
+    free(bla.c);
     
     return 0;
     
